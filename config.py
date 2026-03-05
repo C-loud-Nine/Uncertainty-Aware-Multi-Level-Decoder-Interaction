@@ -52,8 +52,8 @@ RANDOM_STATE = 42
 # ============================================================================
 # LOSS WEIGHTS
 # ============================================================================
-SEG_WEIGHT_START = 0.82
-CLF_WEIGHT_START = 0.18
+SEG_WEIGHT_START = 0.80
+CLF_WEIGHT_START = 0.20
 SEG_WEIGHT_FINAL = 0.78
 CLF_WEIGHT_FINAL = 0.22
 
