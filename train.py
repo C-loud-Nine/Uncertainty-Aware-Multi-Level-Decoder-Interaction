@@ -198,7 +198,7 @@ def main():
         patience=config.REDUCE_LR_PATIENCE,
         cooldown=config.REDUCE_LR_COOLDOWN,
         min_lr=config.MIN_LR
-)
+    )
     early_stop = EarlyStopping(
         monitor=config.MONITOR,
         patience=config.EARLY_STOPPING_PATIENCE,
