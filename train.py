@@ -49,19 +49,76 @@ class AdaptiveLossWeights(Callback):
 
 
 class CosineDecayScheduler(Callback):
-    """Cosine annealing learning rate schedule"""
-    def __init__(self, initial_lr, total_epochs, alpha=0.03):
+    def __init__(
+        self,
+        initial_lr: float,
+        total_epochs: int,
+        alpha: float = 0.03,
+        monitor: str = "val_combined",
+        factor: float = 0.5,
+        patience: int = 7,
+        cooldown: int = 2,
+        min_lr: float = 1e-7,
+    ):
         super().__init__()
-        self.initial_lr = initial_lr
-        self.total_epochs = total_epochs
-        self.alpha = alpha
-    
+        self.initial_lr    = initial_lr
+        self.total_epochs  = total_epochs
+        self.alpha         = alpha
+        self.monitor       = monitor
+        self.factor        = factor
+        self.patience      = patience
+        self.cooldown      = cooldown
+        self.min_lr        = min_lr
+
+        self.best               = -np.inf
+        self.wait               = 0
+        self.cooldown_counter   = 0
+        self.lr_reduction_factor = 1.0   # accumulates all plateau multipliers
+
+    def _cosine_lr(self, epoch):
+        """Pure cosine value for this epoch, before plateau scaling."""
+        progress     = epoch / float(self.total_epochs)
+        cosine_decay = 0.5 * (1.0 + np.cos(np.pi * progress))
+        return self.initial_lr * (self.alpha + (1.0 - self.alpha) * cosine_decay)
+
     def on_epoch_begin(self, epoch, logs=None):
-        progress = epoch / self.total_epochs
-        lr = self.alpha + 0.5 * (1 - self.alpha) * (1 + np.cos(np.pi * progress))
-        current_lr = self.initial_lr * lr
-        tf.keras.backend.set_value(self.model.optimizer.lr, current_lr)
-        print(f"Learning rate: {current_lr:.7f}")
+        # Cosine baseline × accumulated plateau reductions, clamped to min_lr
+        new_lr = max(self._cosine_lr(epoch) * self.lr_reduction_factor, self.min_lr)
+        self.model.optimizer.learning_rate.assign(new_lr)
+        print(f"\nEpoch {epoch+1}: LR = {new_lr:.7f}  "
+              f"(cosine × {self.lr_reduction_factor:.4f})")
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs    = logs or {}
+        current = logs.get(self.monitor)
+        if current is None:
+            return
+
+        # Count down cooldown — at end of epoch, not beginning
+        if self.cooldown_counter > 0:
+            self.cooldown_counter -= 1
+            return  # don't touch wait counter during cooldown
+
+        if current > self.best:
+            self.best = current
+            self.wait = 0
+        else:
+            self.wait += 1
+            if self.wait >= self.patience:
+                # Store the reduction — on_epoch_begin of next epoch applies it
+                self.lr_reduction_factor = max(
+                    self.lr_reduction_factor * self.factor,
+                    self.min_lr / self.initial_lr   # don't let factor push below min_lr
+                )
+                current_lr = float(self.model.optimizer.learning_rate)
+                projected  = max(self._cosine_lr(epoch + 1) * self.lr_reduction_factor,
+                                 self.min_lr)
+                print(f"\nEpoch {epoch+1}: {self.monitor} plateaued "
+                      f"({self.wait} epochs). "
+                      f"Next LR → {projected:.7f}  "
+                      f"[reduction_factor now {self.lr_reduction_factor:.4f}]")
+                self.cooldown_counter = self.cooldown
+                self.wait = 0
 
 
 # ============================================================================
@@ -135,23 +192,19 @@ def main():
     lr_scheduler = CosineDecayScheduler(
         initial_lr=config.INITIAL_LR,
         total_epochs=config.EPOCHS,
-        alpha=config.COSINE_ALPHA
-    )
-    early_stop = EarlyStopping(
-        monitor="val_combined",
-        patience=config.EARLY_STOPPING_PATIENCE,
-        min_delta=config.EARLY_STOPPING_MIN_DELTA,
-        mode="max",
-        restore_best_weights=True,
-        verbose=1
-    )
-    reduce_lr = ReduceLROnPlateau(
-        monitor="val_combined",
+        alpha=config.COSINE_ALPHA,
+        monitor=config.MONITOR,
         factor=config.REDUCE_LR_FACTOR,
         patience=config.REDUCE_LR_PATIENCE,
-        min_lr=config.MIN_LR,
-        mode="max",
         cooldown=config.REDUCE_LR_COOLDOWN,
+        min_lr=config.MIN_LR
+)
+    early_stop = EarlyStopping(
+        monitor=config.MONITOR,
+        patience=config.EARLY_STOPPING_PATIENCE,
+        min_delta=config.EARLY_STOPPING_MIN_DELTA,
+        mode=config.MODE,
+        restore_best_weights=True,
         verbose=1
     )
     
@@ -179,7 +232,6 @@ def main():
         callbacks=[
             composite_metric,
             early_stop,
-            reduce_lr,
             lr_scheduler,
             adaptive_weights
         ],

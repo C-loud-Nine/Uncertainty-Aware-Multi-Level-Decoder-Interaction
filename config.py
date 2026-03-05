@@ -65,6 +65,8 @@ EARLY_STOPPING_MIN_DELTA = 0.004
 REDUCE_LR_PATIENCE = 7
 REDUCE_LR_FACTOR = 0.55
 REDUCE_LR_COOLDOWN = 2
+MONITOR = "val_combined"
+MODE = "max"
 
 # ============================================================================
 # AUGMENTATION
